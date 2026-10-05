@@ -160,9 +160,9 @@ class TransformPipeline:
         # - Search results -> SearchCompressor
         # - HTML -> HTMLExtractor
         #
-        # Wire HeadroomConfig.ignore (+ any .headroomignore at cwd) into the
-        # Read-lifecycle stale/superseded replacement — the one place in the
-        # compression path where a real file path is known (issue #1150).
+        # Wire HeadroomConfig.ignore (+ any .headroomignore at cwd) into Read
+        # lifecycle replacement and age-based tool-result compression, which
+        # can identify a real path from a Read tool call (issue #1150).
         # Root is the process cwd: TransformPipeline has no separate notion
         # of "project root" today, matching the convention used by
         # `headroom doctor` / the code-graph watcher.

@@ -1079,14 +1079,20 @@ def check_ignore_rules(
     from headroom.ignore import IgnorePolicy
 
     policy = IgnorePolicy.load(project_dir or Path.cwd(), config)
+    rules = policy.active_rules()
     if policy.warnings:
+        hint_parts = list(policy.warnings)
+        if rules:
+            hint_parts.append("active rules: " + "; ".join(policy.describe()))
         return CheckResult(
             name="ignore-rules",
             status=WARN,
-            summary=f"{len(policy.warnings)} problem(s) loading ignore rules",
-            hint="; ".join(policy.warnings),
+            summary=(
+                f"{len(policy.warnings)} problem(s) loading ignore rules"
+                + (f"; {len(rules)} active rule(s)" if rules else "")
+            ),
+            hint="; ".join(hint_parts),
         )
-    rules = policy.active_rules()
     if not rules:
         return CheckResult(
             name="ignore-rules",

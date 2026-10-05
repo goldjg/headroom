@@ -420,7 +420,13 @@ def _git(repo: Path, *argv: str) -> subprocess.CompletedProcess | None:
         return None
 
 
-def _ensure_git_ignored(target_path: Path, dry_run: bool) -> str | None:
+def _ensure_git_ignored(
+    target_path: Path,
+    dry_run: bool,
+    project: ProjectInfo,
+    result: WriteResult,
+    config: object | None = None,
+) -> str | None:
     """Keep a personal context file out of git via ``.git/info/exclude``.
 
     ``CLAUDE.local.md`` is only personal if git actually ignores it, and nothing
@@ -466,6 +472,8 @@ def _ensure_git_ignored(target_path: Path, dry_run: bool) -> str | None:
     # git shares info/exclude across linked worktrees via the common dir.
     exclude = Path(common_dir.stdout.strip() or ".git")
     exclude = (repo / exclude / "info" / "exclude").resolve()
+    if _mutation_blocked(exclude, project, result, config, action="updating"):
+        return None
     try:
         exclude.parent.mkdir(parents=True, exist_ok=True)
         prior = exclude.read_text(encoding="utf-8") if exclude.exists() else ""
@@ -529,7 +537,9 @@ class ClaudeCodeWriter(ContextWriter):
                 # explicit --target CLAUDE.md is a deliberate opt-in to the shared
                 # file, and ~/.claude/CLAUDE.md may sit in a dotfiles repo.
                 if target_path.name.endswith(".local.md"):
-                    tracked_warning = _ensure_git_ignored(target_path, dry_run)
+                    tracked_warning = _ensure_git_ignored(
+                        target_path, dry_run, project, result, config
+                    )
                     if tracked_warning:
                         result.warnings.append(tracked_warning)
                 # Migrate any stale block left in the team-shared CLAUDE.md by

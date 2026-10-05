@@ -119,12 +119,15 @@ class IgnoreRule:
             return False
 
         if is_dir_rule:
+            parts = rel_posix.split("/")
+            directory_prefixes = ["/".join(parts[:i]) for i in range(1, len(parts) + 1)]
             if rooted or "/" in pat:
-                return rel_posix == pat or rel_posix.startswith(pat + "/")
+                return any(fnmatch.fnmatchcase(prefix, pat) for prefix in directory_prefixes)
             # Bare directory name (e.g. "node_modules/"): matches that
             # directory at *any* depth, mirroring a plain gitignore entry.
-            segments = rel_posix.split("/")
-            return rel_posix == pat or rel_posix.startswith(pat + "/") or pat in segments[:-1]
+            return any(
+                fnmatch.fnmatchcase(prefix.rsplit("/", 1)[-1], pat) for prefix in directory_prefixes
+            )
 
         if rooted or "/" in pat:
             # Rooted pattern: match against the full relative path. Also treat

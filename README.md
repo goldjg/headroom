@@ -719,9 +719,9 @@ is fully backward compatible.
 - `ignore.memory` / `.headroomignore` — the code-graph file watcher
   (`--code-graph`) never triggers a reindex for an ignored path and excludes
   ignored paths from the reindex input when an allowed file triggers indexing.
-- `ignore.compress` / `.headroomignore` — the Read-lifecycle stale/superseded
-  detector (the pipeline stage that decides whether a previously-Read file's
-  content gets replaced/compressed) never replaces an ignored path's content.
+- `ignore.compress` / `.headroomignore` — Read tool results for ignored paths
+  are protected from both stale/superseded replacement and age-based
+  tool-result compression.
   This is the only compression-path enforcement point today: `ContentRouter`
   otherwise compresses message content that isn't tied to a filesystem path,
   so there's nowhere else to check a path-based rule.

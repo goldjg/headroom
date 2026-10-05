@@ -141,6 +141,85 @@ def test_bash_tool_result_passthrough_when_protected() -> None:
     assert "router:excluded:tool" in result.transforms_applied
 
 
+@pytest.mark.parametrize("shape", ["openai", "anthropic"])
+def test_ignored_read_output_stays_verbatim_after_protection_window(shape: str, tmp_path) -> None:
+    """A path ignored for compression stays verbatim even after Read age-decay."""
+    pytest.importorskip("tiktoken")
+
+    from headroom.ignore import IgnorePolicy
+    from headroom.providers import OpenAIProvider
+    from headroom.tokenizer import Tokenizer
+    from headroom.transforms.content_router import ContentRouter, ContentRouterConfig
+
+    (tmp_path / ".headroomignore").write_text("CLAUDE.md\n")
+    config = ContentRouterConfig(
+        ignore_policy=IgnorePolicy.load(tmp_path),
+        protect_recent_reads_fraction=0.3,
+    )
+    router = ContentRouter(config)
+    tokenizer = Tokenizer(OpenAIProvider().get_token_counter("gpt-4o"), "gpt-4o")
+    read_output = "\n".join(f"line {i}: protected source content" for i in range(120))
+    if shape == "openai":
+        messages = [
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_read_1",
+                        "type": "function",
+                        "function": {
+                            "name": "Read",
+                            "arguments": '{"file_path":"CLAUDE.md"}',
+                        },
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call_read_1", "content": read_output},
+        ]
+    else:
+        messages = [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "call_read_1",
+                        "name": "Read",
+                        "input": {"file_path": "CLAUDE.md"},
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "call_read_1",
+                        "content": read_output,
+                    }
+                ],
+            },
+        ]
+    for i in range(10):
+        messages.extend(
+            [
+                {"role": "user", "content": f"follow-up {i}"},
+                {"role": "assistant", "content": f"response {i}"},
+            ]
+        )
+
+    result = router.apply(messages, tokenizer)
+
+    if shape == "openai":
+        read_message = next(m for m in result.messages if m.get("tool_call_id") == "call_read_1")
+        assert read_message["content"] == read_output
+    else:
+        read_message = result.messages[1]
+        assert read_message["content"][0]["content"] == read_output
+    assert "router:excluded:ignore.compress" in result.transforms_applied
+
+
 # ---------------------------------------------------------------------------
 # Test 4: protect_tool_results sentinel survives a profile-derived
 # read_protection_window kwarg, even when the protected output is old

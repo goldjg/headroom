@@ -979,6 +979,20 @@ class TestClaudeLocalMdStaysOutOfGit:
 
         assert not _exclude(proj).exists() or "CLAUDE.local.md" not in _exclude(proj).read_text()
 
+    def test_mutation_ignore_protects_git_exclude_side_effect(self, tmp_path):
+        proj = _git_project(tmp_path)
+        exclude = _exclude(proj)
+        exclude.write_text("# existing local exclusions\n")
+        before = exclude.read_bytes()
+        (proj.project_path / ".headroomignore").write_text(".git/info/exclude\n")
+        recs = [_rec(RecommendationTarget.CONTEXT_FILE, "Environment", "- Use uv")]
+
+        result = ClaudeCodeWriter().write(recs, proj, dry_run=False)
+
+        assert exclude.read_bytes() == before
+        assert (proj.project_path / "CLAUDE.local.md").exists()
+        assert any("ignored for mutation" in warning for warning in result.warnings)
+
     def test_explicit_shared_target_is_never_excluded(self, tmp_path):
         proj = _git_project(tmp_path)
         recs = [_rec(RecommendationTarget.CONTEXT_FILE, "Environment", "- Use uv")]

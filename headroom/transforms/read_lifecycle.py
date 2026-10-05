@@ -112,11 +112,9 @@ class ReadLifecycleManager:
     ):
         self.config = config
         self.store = compression_store
-        # Central compress-ignore enforcement point (issue #1150): a Read's
-        # file_path is the one place in the compression pipeline where a
-        # real filesystem path is known, so this is where `.headroomignore`
-        # / `ignore.compress` rules are actually enforced — a path ignored
-        # for "compress" is never marked stale/superseded (never replaced).
+        # File-operation parsing exposes paths for Read tool calls, allowing
+        # ignored results to be protected from lifecycle and age-based
+        # tool-result compression.
         self._ignore_policy = ignore_policy
 
     def apply(
@@ -168,6 +166,20 @@ class ReadLifecycleManager:
 
         # Phase 4: Replace stale/superseded content
         return self._apply_lifecycle(messages, classifications)
+
+    def ignored_read_tool_ids(self, messages: list[dict[str, Any]]) -> set[str]:
+        """Return Read tool IDs whose file paths are ignored for compression."""
+        if self._ignore_policy is None:
+            return set()
+        return {
+            tool_call_id
+            for tool_call_id, (name, file_path, _offset, _limit) in self._build_tool_metadata(
+                messages
+            ).items()
+            if name in _READ_TOOL_NAMES
+            and file_path
+            and self._ignore_policy.is_ignored(file_path, "compress")
+        }
 
     def _build_tool_metadata(
         self, messages: list[dict[str, Any]]

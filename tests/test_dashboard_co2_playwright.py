@@ -25,7 +25,7 @@ def test_co2_card_renders_estimated_savings() -> None:
     with sync_playwright() as p:
         browser = p.chromium.launch()
         page = browser.new_page(viewport={"width": 1440, "height": 1000})
-        _open_dashboard(page, stats)
+        _open_dashboard(page, stats, {"projects": {}})
 
         expect(page.get_by_text("CO2 Saved", exact=True)).to_be_visible()
         expect(page.get_by_text("120.00 g", exact=True)).to_be_visible()

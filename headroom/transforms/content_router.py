@@ -1979,10 +1979,9 @@ class ContentRouterConfig:
 
     # Central compress-ignore policy (issue #1150): a `headroom.ignore.IgnorePolicy`
     # built by the caller (SDK `TransformPipeline` from `HeadroomConfig.ignore` /
-    # `.headroomignore`, or the proxy from `ProxyConfig.ignore`). When set, Read
-    # lifecycle management never marks an ignored path stale/superseded, so its
-    # content is never replaced/compressed. None (default) preserves prior
-    # behavior — no path is exempt from compression.
+    # `.headroomignore`, or the proxy from `ProxyConfig.ignore`). When set, paths
+    # extracted from Read tool calls are protected from lifecycle and
+    # age-based tool-result compression. None preserves prior behavior.
     ignore_policy: Any | None = None
 
     # Per-tool compression profiles (tool_name → CompressionProfile)
@@ -5637,6 +5636,18 @@ class ContentRouter(Transform):
             if is_tool_excluded(name, ("headroom_retrieve",))
         }
 
+        ignored_compress_tool_ids: set[str] = set()
+        ignore_policy = self.config.ignore_policy
+        if ignore_policy is not None and any(
+            rule.applies_to("compress") for rule in ignore_policy.active_rules()
+        ):
+            from .read_lifecycle import ReadLifecycleManager
+
+            ignored_compress_tool_ids = ReadLifecycleManager(
+                self.config.read_lifecycle,
+                ignore_policy=ignore_policy,
+            ).ignored_read_tool_ids(messages)
+
         # Read protection (HEADROOM_PROTECT_READS=1): for bash-family agents the
         # exclude-by-tool-NAME set above never catches file reads (they are `bash`
         # tool calls whose COMMAND is a cat/sed/head/...). Mark those tool_use_ids so
@@ -5957,6 +5968,7 @@ class ContentRouter(Transform):
                     compress_assistant_text_blocks=compress_assistant_text_blocks,
                     prefix_replay_guaranteed=prefix_replay_guaranteed,
                     protect_prompt_text=prompt_turn,
+                    ignored_compress_tool_ids=ignored_compress_tool_ids,
                 )
                 result_slots[i] = transformed_message
                 route_counts["content_blocks"] += 1
@@ -5999,6 +6011,13 @@ class ContentRouter(Transform):
                 route_counts["ccr_retrieve"] += 1
                 if collect_diagnostics:
                     _diag[i] = "protected:ccr_retrieve"
+                continue
+
+            if role in ("tool", "function") and tool_call_id in ignored_compress_tool_ids:
+                result_slots[i] = message
+                transforms_applied.append("router:excluded:ignore.compress")
+                if collect_diagnostics:
+                    _diag[i] = "protected:ignore.compress"
                 continue
 
             # Skip OpenAI-style tool messages for excluded tools
@@ -6961,6 +6980,7 @@ class ContentRouter(Transform):
         compress_assistant_text_blocks: bool = False,
         prefix_replay_guaranteed: bool = False,
         protect_prompt_text: bool = False,
+        ignored_compress_tool_ids: set[str] | None = None,
     ) -> dict[str, Any]:
         """Process content blocks (Anthropic format) for compression.
 
@@ -7079,6 +7099,13 @@ class ContentRouter(Transform):
             if block_type == "tool_result":
                 # Check if tool is excluded from compression
                 tool_use_id = block.get("tool_use_id", "")
+                if tool_use_id in (ignored_compress_tool_ids or set()):
+                    new_blocks.append(block)
+                    transforms_applied.append("router:excluded:ignore.compress")
+                    if route_counts is not None:
+                        route_counts["excluded_tool"] += 1
+                    continue
+
                 # Flatten OpenAI-style list-form content up front (see fix-7 note below)
                 # so both the read-protection content check and the compressor see the
                 # same text.

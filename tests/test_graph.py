@@ -257,8 +257,7 @@ def test_code_graph_watcher_init_start_stop_and_event_filtering(
 
 
 def test_code_graph_watcher_ignores_headroomignore_paths(monkeypatch, tmp_path: Path) -> None:
-    """A file matching .headroomignore must not trigger a reindex (#1150)."""
-    (tmp_path / ".headroomignore").write_text("CLAUDE.md\n")
+    """Ignore-rule edits reload policy before later changes trigger indexing."""
     monkeypatch.setattr("headroom.graph.installer.get_cbm_path", lambda: tmp_path / "cbm")
     graph_watcher = watcher.CodeGraphWatcher(tmp_path)
 
@@ -288,11 +287,15 @@ def test_code_graph_watcher_ignores_headroomignore_paths(monkeypatch, tmp_path: 
     assert graph_watcher.start() is True
     handler, _, _ = graph_watcher._observer.scheduled
 
+    (tmp_path / ".headroomignore").write_text("CLAUDE.md\n")
+    handler.on_any_event(SimpleNamespace(src_path=str(tmp_path / ".headroomignore")))
+    assert graph_watcher._ignore_policy.is_ignored(tmp_path / "CLAUDE.md", "memory")
+
     handler.on_any_event(SimpleNamespace(src_path=str(tmp_path / "CLAUDE.md")))
-    assert scheduled == []
+    assert scheduled == ["reindex"]
 
     handler.on_any_event(SimpleNamespace(src_path=str(tmp_path / "main.py")))
-    assert scheduled == ["reindex"]
+    assert scheduled == ["reindex", "reindex"]
 
 
 def test_code_graph_watcher_ignores_config_ignore_memory_paths(monkeypatch, tmp_path: Path) -> None:

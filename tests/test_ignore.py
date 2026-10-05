@@ -59,6 +59,23 @@ class TestHeadroomIgnoreFile:
         assert policy.is_ignored(".github/carl", "mutate")
         assert not policy.is_ignored(".github/other.md", "mutate")
 
+    @pytest.mark.parametrize(
+        ("pattern", "path"),
+        [
+            ("generated-*/", "generated-v2/CLAUDE.md"),
+            ("generated-*/", "src/generated-v2/CLAUDE.md"),
+            ("/generated-*/", "generated-v2/CLAUDE.md"),
+            ("src/generated-*/", "src/generated-v2/CLAUDE.md"),
+        ],
+    )
+    def test_wildcard_directory_rules_match_descendants(
+        self, pattern: str, path: str, tmp_path: Path
+    ) -> None:
+        _write(tmp_path / ".headroomignore", pattern + "\n")
+        policy = IgnorePolicy.load(tmp_path)
+
+        assert policy.is_ignored(path, "memory")
+
     def test_directory_globstar_match(self, tmp_path: Path) -> None:
         _write(tmp_path / ".headroomignore", ".github/carl/**\n")
         policy = IgnorePolicy.load(tmp_path)
