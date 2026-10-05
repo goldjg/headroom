@@ -5927,6 +5927,14 @@ class ContentRouter(Transform):
                 route_counts["hook_protected"] = route_counts.get("hook_protected", 0) + 1
                 continue
 
+            tool_call_id = message.get("tool_call_id", "") if role in ("tool", "function") else ""
+            if tool_call_id in ignored_compress_tool_ids:
+                result_slots[i] = message
+                transforms_applied.append("router:excluded:ignore.compress")
+                if collect_diagnostics:
+                    _diag[i] = "protected:ignore.compress"
+                continue
+
             messages_from_end = num_messages - i
             # The caller's own words stay verbatim on a replaying path even
             # when user messages are compressible for their tool observations:
@@ -5998,7 +6006,6 @@ class ContentRouter(Transform):
             # tool_call_id -> ccr_retrieve_tool_ids, precomputed above) and legacy
             # role:"function" (that shape carries no call id -- the tool name is on
             # the message itself via "name", per OpenAI's pre-parallel-tool-calls API).
-            tool_call_id = message.get("tool_call_id", "") if role in ("tool", "function") else ""
             if role in ("tool", "function") and (
                 tool_call_id in ccr_retrieve_tool_ids
                 or (
@@ -6011,13 +6018,6 @@ class ContentRouter(Transform):
                 route_counts["ccr_retrieve"] += 1
                 if collect_diagnostics:
                     _diag[i] = "protected:ccr_retrieve"
-                continue
-
-            if role in ("tool", "function") and tool_call_id in ignored_compress_tool_ids:
-                result_slots[i] = message
-                transforms_applied.append("router:excluded:ignore.compress")
-                if collect_diagnostics:
-                    _diag[i] = "protected:ignore.compress"
                 continue
 
             # Skip OpenAI-style tool messages for excluded tools
@@ -6555,7 +6555,11 @@ class ContentRouter(Transform):
         # cache_control blocks are reference targets only (never rewritten).
         if self._cross_turn_dedup_enabled and dedup_pointers_recoverable:
             transformed_messages = self._cross_turn_dedup_messages(
-                transformed_messages, frozen_message_count, transforms_applied, route_counts
+                transformed_messages,
+                frozen_message_count,
+                transforms_applied,
+                route_counts,
+                ignored_compress_tool_ids=ignored_compress_tool_ids,
             )
 
         tokens_after = sum(
@@ -6818,6 +6822,7 @@ class ContentRouter(Transform):
         frozen_message_count: int,
         transforms_applied: list[str],
         route_counts: dict[str, int] | None,
+        ignored_compress_tool_ids: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Whole-conversation verbatim de-dup pass (cache-safe, information-lossless).
 
@@ -6841,6 +6846,7 @@ class ContentRouter(Transform):
                 for tool_id, name in tool_name_map.items()
                 if is_tool_excluded(name, DEFAULT_VERBATIM_EXCLUDE_TOOLS)
             }
+            ignored_tool_ids = ignored_compress_tool_ids or set()
 
             def _is_user_read_observation(idx: int) -> bool:
                 # A file read can land in a plain ``role:user`` STRING (text
@@ -6871,6 +6877,7 @@ class ContentRouter(Transform):
                             frozen
                             or ("cache_control" in block)
                             or block.get("tool_use_id") in verbatim_tool_ids
+                            or block.get("tool_use_id") in ignored_tool_ids
                         )
                         if isinstance(tc, str) and tc:
                             locs.append((i, bidx, None))
@@ -6909,6 +6916,7 @@ class ContentRouter(Transform):
                             frozen
                             or ("cache_control" in msg)
                             or msg.get("tool_call_id") in verbatim_tool_ids
+                            or msg.get("tool_call_id") in ignored_tool_ids
                         )
                         locs.append((i, None, None))
                         dblocks.append(DedupBlock(text=content, turn=i, protected=protected))

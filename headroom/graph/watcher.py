@@ -141,6 +141,7 @@ class CodeGraphWatcher:
             self.cbm_binary = str(path) if path else None
         self._observer: object | None = None
         self._debounce_timer: threading.Timer | None = None
+        self._debounce_generation = 0
         self._lock = threading.Lock()
         self._running = False
         self._reindex_count = 0
@@ -164,17 +165,19 @@ class CodeGraphWatcher:
                 self._watcher = watcher
 
             def on_any_event(self, event: object) -> None:
-                # watchdog event has src_path attribute
                 src_path = getattr(event, "src_path", "")
-                if not src_path:
+                dest_path = getattr(event, "dest_path", "")
+                event_paths = [Path(value) for value in (src_path, dest_path) if value]
+                if not event_paths:
                     return
 
-                path = Path(src_path)
-
-                if path.resolve() == (Path(self._watcher.project_dir) / IGNORE_FILE_NAME).resolve():
+                ignore_path = (Path(self._watcher.project_dir) / IGNORE_FILE_NAME).resolve()
+                if any(path.resolve() == ignore_path for path in event_paths):
                     self._watcher._reload_ignore_policy()
                     self._watcher._schedule_reindex()
                     return
+
+                path = Path(src_path) if src_path else event_paths[0]
 
                 # Skip ignored directories
                 for part in path.parts:
@@ -215,6 +218,7 @@ class CodeGraphWatcher:
         """Stop watching and clean up."""
         self._running = False
         with self._lock:
+            self._debounce_generation += 1
             if self._debounce_timer:
                 self._debounce_timer.cancel()
                 self._debounce_timer = None
@@ -233,13 +237,27 @@ class CodeGraphWatcher:
 
     def _schedule_reindex(self) -> None:
         """Schedule a debounced reindex. Resets timer on each call."""
-        timer = threading.Timer(self.debounce_seconds, self._do_reindex)
-        timer.daemon = True
         with self._lock:
             if self._debounce_timer:
                 self._debounce_timer.cancel()
+            self._debounce_generation += 1
+            generation = self._debounce_generation
+            timer = threading.Timer(
+                self.debounce_seconds,
+                self._do_reindex_if_current,
+                args=(generation,),
+            )
+            timer.daemon = True
             self._debounce_timer = timer
         timer.start()
+
+    def _do_reindex_if_current(self, generation: int) -> None:
+        """Ignore callbacks from timers superseded by a later filesystem event."""
+        with self._lock:
+            if generation != self._debounce_generation:
+                return
+            self._debounce_timer = None
+        self._do_reindex()
 
     def _reload_ignore_policy(self) -> None:
         """Reload policies after the root ignore file changes."""

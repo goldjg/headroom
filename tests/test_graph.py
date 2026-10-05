@@ -297,6 +297,21 @@ def test_code_graph_watcher_ignores_headroomignore_paths(monkeypatch, tmp_path: 
     handler.on_any_event(SimpleNamespace(src_path=str(tmp_path / "main.py")))
     assert scheduled == ["reindex", "reindex"]
 
+    ignore_path = tmp_path / ".headroomignore"
+    temp_path = tmp_path / ".headroomignore.tmp"
+    temp_path.write_text("AGENTS.md\n")
+    temp_path.replace(ignore_path)
+    handler.on_any_event(SimpleNamespace(src_path=str(temp_path), dest_path=str(ignore_path)))
+    assert not graph_watcher._ignore_policy.is_ignored(tmp_path / "CLAUDE.md", "memory")
+    assert graph_watcher._ignore_policy.is_ignored(tmp_path / "AGENTS.md", "memory")
+    assert scheduled == ["reindex", "reindex", "reindex"]
+
+    backup_path = tmp_path / ".headroomignore.backup"
+    ignore_path.replace(backup_path)
+    handler.on_any_event(SimpleNamespace(src_path=str(ignore_path), dest_path=str(backup_path)))
+    assert not graph_watcher._ignore_policy.is_ignored(tmp_path / "AGENTS.md", "memory")
+    assert scheduled == ["reindex", "reindex", "reindex", "reindex"]
+
 
 def test_code_graph_watcher_ignores_config_ignore_memory_paths(monkeypatch, tmp_path: Path) -> None:
     """`ignore.memory` config (no .headroomignore file) also suppresses reindex (#1150)."""
@@ -365,14 +380,15 @@ def test_reindex_triggered_by_allowed_file_stages_only_non_ignored_files(
             pass
 
     class ImmediateTimer:
-        def __init__(self, interval, callback) -> None:
+        def __init__(self, interval, callback, args=()) -> None:
             self.interval = interval
             self.callback = callback
+            self.args = args
             self.daemon = False
             self.cancelled = False
 
         def start(self) -> None:
-            self.callback()
+            self.callback(*self.args)
 
         def cancel(self) -> None:
             self.cancelled = True
@@ -452,9 +468,10 @@ def test_schedule_reindex_replaces_existing_timer(monkeypatch, tmp_path: Path) -
     timers: list[FakeTimer] = []
 
     class FakeTimer:
-        def __init__(self, interval, callback) -> None:
+        def __init__(self, interval, callback, args=()) -> None:
             self.interval = interval
             self.callback = callback
+            self.args = args
             self.daemon = False
             self.started = False
             self.cancelled = False
@@ -475,6 +492,42 @@ def test_schedule_reindex_replaces_existing_timer(monkeypatch, tmp_path: Path) -
     assert timers[1].started is True
     assert timers[1].daemon is True
     assert timers[1].interval == 3.5
+
+
+def test_stale_debounce_timer_cannot_reindex_after_replacement(monkeypatch, tmp_path: Path) -> None:
+    graph_watcher = watcher.CodeGraphWatcher(tmp_path, cbm_binary="cbm")
+    graph_watcher._running = True
+    timers = []
+    reindexes = []
+
+    class FakeTimer:
+        def __init__(self, interval, callback, args=()) -> None:
+            self.callback = callback
+            self.args = args
+            self.cancelled = False
+            timers.append(self)
+
+        def start(self) -> None:
+            if len(timers) == 1:
+                graph_watcher._schedule_reindex()
+
+        def cancel(self) -> None:
+            self.cancelled = True
+
+        def fire(self) -> None:
+            self.callback(*self.args)
+
+    monkeypatch.setattr(watcher.threading, "Timer", FakeTimer)
+    monkeypatch.setattr(graph_watcher, "_do_reindex", lambda: reindexes.append("reindex"))
+
+    graph_watcher._schedule_reindex()
+
+    assert len(timers) == 2
+    assert timers[0].cancelled is True
+    timers[0].fire()
+    assert reindexes == []
+    timers[1].fire()
+    assert reindexes == ["reindex"]
 
 
 def test_do_reindex_success_failure_timeout_and_stats(monkeypatch, tmp_path: Path) -> None:
