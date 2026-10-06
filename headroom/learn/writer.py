@@ -95,6 +95,7 @@ def _mutation_blocked(
     config: object | None = None,
     *,
     action: str = "writing",
+    policy_path: Path | None = None,
 ) -> bool:
     """Return True and record a warning if ``target_path`` is ignored for mutation.
 
@@ -114,6 +115,8 @@ def _mutation_blocked(
     ignore_config = getattr(config, "ignore", None) if config is not None else None
     policy = IgnorePolicy.load(project.project_path, ignore_config)
     rule = policy.matching_rule(target_path, "mutate")
+    if rule is None and policy_path is not None:
+        rule = policy.matching_rule(policy_path, "mutate")
     if rule is None:
         return False
     result.warnings.append(
@@ -472,7 +475,16 @@ def _ensure_git_ignored(
     # git shares info/exclude across linked worktrees via the common dir.
     exclude = Path(common_dir.stdout.strip() or ".git")
     exclude = (repo / exclude / "info" / "exclude").resolve()
-    if _mutation_blocked(exclude, project, result, config, action="updating"):
+    # Linked worktrees share metadata outside the policy root, but rules for
+    # the repository-relative administrative path must still protect it.
+    if _mutation_blocked(
+        exclude,
+        project,
+        result,
+        config,
+        action="updating",
+        policy_path=Path(".git/info/exclude"),
+    ):
         return None
     try:
         exclude.parent.mkdir(parents=True, exist_ok=True)

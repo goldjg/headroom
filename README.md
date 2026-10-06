@@ -713,7 +713,10 @@ is fully backward compatible.
 - `ignore.mutate` / `.headroomignore` — every `headroom learn` writer
   (`CLAUDE.local.md`/`AGENTS.md`/`GEMINI.md`/`MEMORY.md`) and every
   agent-native memory writer (`headroom memory export`) refuses to write an
-  ignored target.
+  ignored target. Protecting `.git/info/exclude` also blocks `headroom learn`
+  from updating that Git administrative file, including the shared exclude
+  file used by linked worktrees; allowed context files are still written and
+  the skipped metadata update is reported as a warning.
 - `ignore.learn` / `.headroomignore` — `headroom learn` never treats an
   ignored `CLAUDE.md`/`MEMORY.md` as a prior-learned-patterns baseline.
 - `ignore.memory` / `.headroomignore` — the code-graph file watcher

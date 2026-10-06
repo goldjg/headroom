@@ -993,6 +993,58 @@ class TestClaudeLocalMdStaysOutOfGit:
         assert (proj.project_path / "CLAUDE.local.md").exists()
         assert any("ignored for mutation" in warning for warning in result.warnings)
 
+    @pytest.mark.parametrize(
+        ("pattern", "from_config"),
+        [
+            (".git/info/exclude", False),
+            ("/.git/info/exclude", False),
+            (".git/", False),
+            (".git/info/exclude", True),
+        ],
+    )
+    def test_mutation_ignore_protects_linked_worktree_exclude(self, tmp_path, pattern, from_config):
+        from headroom.config import HeadroomConfig, IgnoreConfig
+
+        parent = _git_project(tmp_path)
+        _git(
+            parent,
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "Initial commit",
+        )
+        worktree = tmp_path / "linked-worktree"
+        _git(parent, "worktree", "add", "--detach", str(worktree))
+        proj = ProjectInfo(
+            name="linked-worktree", project_path=worktree, data_path=parent.data_path
+        )
+        assert (worktree / ".git").is_file()
+        exclude = _exclude(parent)
+        exclude.write_text("# existing shared exclusions\n")
+        before = exclude.read_bytes()
+        config = None
+        if from_config:
+            config = HeadroomConfig(ignore=IgnoreConfig(mutate=[pattern]))
+        else:
+            (worktree / ".headroomignore").write_text(f"{pattern}\n")
+        recs = [_rec(RecommendationTarget.CONTEXT_FILE, "Environment", "- Use uv")]
+
+        result = ClaudeCodeWriter().write(recs, proj, dry_run=False, config=config)
+
+        assert exclude.read_bytes() == before
+        local = worktree / "CLAUDE.local.md"
+        assert "- Use uv" in local.read_text()
+        assert local in result.files_written
+        assert len(result.warnings) == 1
+        assert f"Skipped updating {exclude}" in result.warnings[0]
+        assert f"ignored for mutation by rule '{pattern}'" in result.warnings[0]
+        source = "config:ignore.mutate" if from_config else ".headroomignore"
+        assert f"(from {source})" in result.warnings[0]
+
     def test_explicit_shared_target_is_never_excluded(self, tmp_path):
         proj = _git_project(tmp_path)
         recs = [_rec(RecommendationTarget.CONTEXT_FILE, "Environment", "- Use uv")]
