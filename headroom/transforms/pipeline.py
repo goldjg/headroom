@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import logging
 import os
 import threading
@@ -193,13 +194,19 @@ class TransformPipeline:
         # module scope — transforms sits below telemetry in the import graph.
         from headroom.telemetry.session import BeaconCompressionObserver
 
+        # ``config.smart_crusher`` is the documented knob for JSON-array
+        # compression, so it must reach the router's crusher. ``enabled`` is
+        # carried by the Rust config but never read there, so the router gate
+        # enforces it. Copied so the router's lazy build can't write back into
+        # the caller's config.
         ignore_policy = IgnorePolicy.load(_Path.cwd(), getattr(self.config, "ignore", None))
-        transforms.append(
-            ContentRouter(
-                ContentRouterConfig(ignore_policy=ignore_policy),
-                observer=BeaconCompressionObserver(),
-            )
+        smart_crusher = self.config.smart_crusher
+        router_config = ContentRouterConfig(
+            ignore_policy=ignore_policy,
+            enable_smart_crusher=smart_crusher.enabled,
+            smart_crusher=copy.deepcopy(smart_crusher),
         )
+        transforms.append(ContentRouter(router_config, observer=BeaconCompressionObserver()))
         logger.info("Pipeline using ContentRouter for intelligent content-aware compression")
 
         return transforms
